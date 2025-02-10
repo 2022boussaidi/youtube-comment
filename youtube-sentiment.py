@@ -1,3 +1,4 @@
+from flask import Flask, request, jsonify
 from googleapiclient.discovery import build
 import pandas as pd
 from time import sleep
@@ -5,11 +6,10 @@ import traceback
 import os
 from dotenv import load_dotenv
 
-# pip install virtualenv
-# virtualenv <your-env>
-# <your-env>\Scripts\activate
-# <your-env>\Scripts\pip.exe install google-api-python-client
+# Load environment variables
 load_dotenv()
+
+app = Flask(__name__)
 
 def get_comments(api_key, video_id):
     youtube = build('youtube', 'v3', developerKey=api_key)
@@ -21,8 +21,9 @@ def get_comments(api_key, video_id):
     )
 
     df = pd.DataFrame(columns=['comment', 'replies', 'date', 'user_name'])
+    iteration_count = 0  # Counter to track iterations
 
-    while request:
+    while request and iteration_count < 10:  # Limit to 10 iterations
         replies = []
         comments = []
         dates = []
@@ -64,7 +65,8 @@ def get_comments(api_key, video_id):
             df.to_csv(f"{video_id}_user_comments.csv", index=False, encoding='utf-8')
             sleep(2)
             request = youtube.commentThreads().list_next(request, response)
-            print("Iterating through next page")
+            iteration_count += 1  # Increment the counter
+            print(f"Iteration {iteration_count} completed")
         except Exception as e:
             print(str(e))
             print(traceback.format_exc())
@@ -73,11 +75,28 @@ def get_comments(api_key, video_id):
             df.to_csv(f"{video_id}_user_comments.csv", index=False, encoding='utf-8')
             break
 
-def main():
+    return df
+
+@app.route('/get_comments', methods=['GET'])
+def fetch_comments():
+    video_id = request.args.get('video_id')
+    if not video_id:
+        return jsonify({"error": "video_id is required"}), 400
+
     api_key = os.getenv("API_KEY")
-    #You have to extract the video id from the youtube url
-    video_id = "yzdbj8jt6rg"
-    get_comments(api_key, video_id)
+    if not api_key:
+        return jsonify({"error": "API_KEY not found in environment variables"}), 500
+
+    try:
+        comments_df = get_comments(api_key, video_id)
+        # Convert DataFrame to JSON
+        comments_json = comments_df.to_json(orient='records', force_ascii=False)
+        return jsonify({
+            "message": f"Comments fetched and saved to {video_id}_user_comments.csv",
+            "comments": comments_json
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    main()
+    app.run(debug=True)
